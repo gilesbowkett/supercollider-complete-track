@@ -1,0 +1,416 @@
+(
+//
+// SYNTHS
+//
+
+// http://blog.rumblesan.com/post/53271713518/drum-sounds-in-supercollider-part-1
+SynthDef('kick', { arg amp=1;
+
+	var subosc = {SinOsc.ar(55)};
+	var subenv = {Line.ar(amp, 0, 0.3, doneAction: 2)};
+
+	var crackle = { BPF.ar(in: PinkNoise.ar, freq: 660, rq: 3, mul: Env.perc(releaseTime: 0.3, level: amp).ar) };
+
+	var clickosc = {LPF.ar(WhiteNoise.ar(1),1500)};
+	var clickenv = {Line.ar(amp, 0, 0.02)};
+
+	var suboutput = (subosc * subenv);
+	var clickoutput = (clickosc * clickenv);
+
+	var kickOut = Out.ar(0,
+		Pan2.ar(suboutput + clickoutput + crackle, 0)
+	);
+
+}).add;
+
+// http://blog.rumblesan.com/post/53271713909/drum-sounds-in-supercollider-part-2
+SynthDef('snare', { arg amp = 1;
+
+var drumosc, filterenv, drumoutput, volenv;
+
+filterenv = {Line.ar(1, 0, 0.2, doneAction: 2)};
+volenv = {Line.ar(amp, 0, 0.6, doneAction: 2)};
+
+drumosc = {
+	BPF.ar(in: WhiteNoise.ar(100), freq: (filterenv * 1760), rq: 0.2)
+};
+drumoutput = {LPF.ar(drumosc,(filterenv * 1000) + 3)};
+
+Out.ar(0,
+		FreeVerb.ar(in: Pan2.ar(drumoutput * volenv * 0.1), mix: 0.2, room: 0.5)
+);
+
+}).add;
+
+// crash
+SynthDef("crash", { arg amp = 1;
+	var whiteNoise = PinkNoise.ar(
+		mul: Env.perc(releaseTime: 4, curve: -7).kr(doneAction: 2));
+	Out.ar(0, Pan2.ar(HPF.ar(whiteNoise, freq: 7040)) * 4 * amp);
+}).add;
+
+
+// set up clap sample
+~clapBuffer = Buffer.read(s, "<%= this_directory %>/audio/11098__a43__a43-clap.aiff");
+
+
+// set up open hat sample
+~openHatBuffer = Buffer.read(s, "<%= this_directory %>/audio/165028__rodrigo-the-mad__mini-909ish-open-hat.wav");
+
+
+// generic sample player synthdef
+SynthDef("samplePlayer",{ arg out = 0, bufnum, amp;
+		Out.ar( out,
+			PlayBuf.ar(2, bufnum, BufRateScale.kr(bufnum), doneAction: 2) * amp;
+		)
+	}).add;
+
+// basic synth hat
+SynthDef("hat", { arg amp = 1, startPan = -1, endPan = 1, pitchVariation = 0, release = 0.1;
+	var whiteNoise = WhiteNoise.ar(mul: Env.perc(releaseTime: release, curve: -7).kr(doneAction: 2));
+	Out.ar(0, Pan2.ar(BBandPass.ar(whiteNoise, freq: pitchVariation, bw: 1), pos: Line.kr(startPan, endPan, 4)) * amp);
+}).add;
+
+// riser
+SynthDef("riser",
+	{ arg amp = 1, startPan = -1, endPan = 1;
+		// envs
+		var env1 = Env.pairs([[0, 0], [0.4, amp], [3.1, 0.5], [3.5, 0]], \lin); // amp env
+		var env2 = Env.pairs([[0, 55], [0.4, 110], [1, 220], [3.1, 1760]], \lin);
+		var env3 = Env.pairs([[0, 50], [4, 1]], \exponential);
+
+		// build oscs on the envs
+		var squiggly = Saw.ar(freq: SinOsc.ar(env3.kr(doneAction: 2)).range(30, 19900), mul: (env1.kr * 0.6)) * amp;
+		var riser = Saw.ar(freq: env2.kr, mul: (env1.kr(doneAction: 2) * 0.2)) * amp;
+
+		// first combine these mono channels in a stereo space, then add reverb
+		var combined = Pan2.ar(squiggly + riser, pos: Line.kr(startPan, endPan, 4));
+		Out.ar(0, FreeVerb.ar(in: combined, mix: 0.5, room: 0.5));
+}).add;
+
+SynthDef("zaps", { arg amp = 1, modFreq = 15, carFreq = 880, modDepth = 3250;
+	var car, mod, env;
+
+	env = Env.perc(releaseTime: 0.3).kr(doneAction: 2);
+	mod = Pulse.ar(freq: modFreq * [1, 1.14, 0.97, 6, 7, 8, 9, 10, 1.04, 1.2], mul: modDepth);
+	car = Pulse.ar(freq: carFreq + mod * [1, 1.41, 0.99, 2.4921, 5, 6, 1.397], mul: env);
+	car = Splay.ar(car);
+	Out.ar(0, FreeVerb.ar(HPF.ar(car, freq: 5274), mix: 0.05, room: 0.1, damp: 0.9, mul: amp * 0.5));
+}).add;
+
+// Bruno's Karplus-Strong synth
+SynthDef("plucking", {arg amp = 0.1, freq = 440, decay = 5, dampen = 0.1;
+
+var env, snd;
+env = Env.linen(0, decay, 0).kr(doneAction: 2);
+snd = FreeVerb.ar(Pluck.ar(
+        in: WhiteNoise.ar(amp),
+        trig: Impulse.kr(0),
+        maxdelaytime: 0.1,
+        delaytime: freq.reciprocal,
+        decaytime: decay,
+		coef: dampen,
+		mul: env
+	), mix: 0.7, room: 0.8);
+    Out.ar(0, [snd, snd] * env);
+}).add;
+
+// pad synth (from presentation today)
+SynthDef("padSynth", { arg midinote, gate = 1;
+	var ampEnv, freq, gen, fmod, rqmod, snd;
+	ampEnv = EnvGen.ar(
+		envelope: Env.adsr(3, 3, 0.8, 5, 0.5),
+		gate: gate,
+		doneAction: 2);
+
+	freq = { midinote.midicps * LFNoise2.kr(1,0.01,1) }!12;
+	gen = LFSaw.ar(freq: freq, mul: ampEnv);
+	fmod = LFCub.kr(1/12, mul: ampEnv).range(1, MouseX.kr(2,16));
+	rqmod = LFNoise2.kr(1/8, mul: ampEnv).range(0.1,1.0);
+	snd = RLPF.ar(gen, freq * fmod, rqmod, ampEnv);
+	Out.ar(0, Splay.ar(snd * ampEnv * 0.3));
+}).add;
+
+
+//
+// TIMING
+//
+
+// set up when to play the kick
+~kickAmps = [ 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 ]; // 16 beats
+
+// set up when to play the clap
+~clapAmps = [ 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0 ]; // 16 beats
+
+// set up when to play the hats
+~hatAmps = [ 0.1, 0, 1, 0, 0, 0, 1, 0, 0.1, 0, 1, 0.1, 0, 0.1, 1, 0 ]; // 16 beats
+~hatStarts = [ 0.5, 0, -0.5, 0, 0.7, -0.7 ]; // hat pan timing
+~hatEnds = [ -0.7, 0, 0.7, 0, 0.5, -0.5 ]; // hat pan timing
+~hatReleases = [
+	0.1, 0.2, 0.1, 0.3, 0.2, 0.3, 0.5, 0.6,
+	0.2, 0.1, 0.3, 0.3, 0.1, 0.2, 0.4, 0.2,
+	0.1, 0.2, 0.2, 0.3, 0.1, 0.3, 0.3, 0.4,
+	0.2, 0.1, 0.3, 0.3, 0.1, 0.2, 0.4, 0.2,
+	0.1, 0.2, 0.2, 0.3, 0.1, 0.3, 0.3, 0.4,
+	0.2, 0.1, 0.3, 0.3, 0.1, 0.2, 0.4, 0.2,
+	0.1, 0.2, 0.3, 0.4, 0.2, 0.3, 0.1, 0.3
+]; // hat release times
+
+// timing for sampled open hat
+~sampledOpenHatAmps = [ 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0 ];
+
+// ride timing
+~rideAmps = [
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+
+	1, 0, 0, 1,
+	0, 0, 1, 0,
+	1, 0, 0, 1,
+	1, 0, 1, 0
+];
+
+// riser is a little different -- one measure long
+~riserAmps = [ 1, 0, 0, 0 ]; // 4 beats
+~riserStarts = [ 1, 0, 0, -1 ];
+~riserEnds = [ -1, 0, 0, 1 ];
+
+// crash is like riser
+~crashAmps = [ 1, 0, 0, 0, 0, 0, 0, 0 ]; // 8 beats
+
+// timing for snare (bar line work)
+~snareAmps = [
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 1, 0, 1 ];
+
+
+// pluck timing
+~pluckAmps = [
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+
+	0, 0, 0, 0,
+	1, 0, 1, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0,
+	0, 0, 0, 0
+];
+
+// timing for quasi arp
+~quasiArpAmps = [ 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0 ];
+
+
+//
+// PBINDS
+//
+
+// pattern bindings
+~clock = TempoClock(125/60);
+
+// 4/4 kick
+~kickPattern = { arg measures;
+	Pbind(
+		\instrument, \kick,
+		\dur, 1/4, // 16th note is one quarter of a beat!
+		\amp, Pseq(~kickAmps, measures)
+	)
+};
+
+// sample player: clap
+~sampleClapPattern = { arg measures;
+	Pbind(
+		\instrument, \samplePlayer,
+		\dur, 1/4, // 16th note is one quarter of a beat!
+		\bufnum, ~clapBuffer,
+		\amp, Pseq(~clapAmps, measures)
+)};
+
+// sample player: hat
+~sampleHatPattern = { arg measures;
+	Pbind(
+		\instrument, \samplePlayer,
+		\dur, 1/4, // 16th note is one quarter of a beat!
+		\bufnum, ~openHatBuffer,
+		\amp, Pseq(~sampledOpenHatAmps * 0.65, measures)
+)};
+
+~synthHatPattern = Pbind(
+	\instrument, \hat,
+	\dur, 1/4, // 16th note is one quarter of a beat!
+	\amp, Pseq(~hatAmps, inf),
+	\startPan, Pseq(~hatStarts, inf),
+	\endPan, Pseq(~hatEnds, inf),
+	\pitchVariation, Prand([3520, 2637, 7040], inf),
+	\release, Pseq(~hatReleases, inf)
+);
+
+~zapPattern = { arg measures ;
+	Pbind(
+		\instrument, \zaps,
+		\dur, 1/4,
+		\amp, Pseq(~rideAmps, measures)
+)};
+
+// bar line work
+
+~snarePattern = { arg measures ;
+	Pbind(
+		\instrument, \snare,
+		\dur, 1/4, // 16th note is one quarter of a beat!
+		\amp, Pseq(~snareAmps, measures / 2)
+)};
+
+// riser, crash
+
+~riserPattern = { arg measures ;
+	Pbind(
+		\instrument, \riser,
+		\dur, 2, // 16 half notes instead of 16ths
+		\amp, Pseq(~riserAmps, measures),
+		\startPan, Pseq(~riserStarts, measures),
+		\endPan, Pseq(~riserEnds, measures)
+		// this "sending in Pseq-ed vars" strategy would work to make the track more generative also
+)};
+
+~crashPattern = { arg measures ;
+	Pbind(
+		\instrument, \crash,
+		\dur, 2,
+		\amp, Pseq(~crashAmps, measures / 2)
+)};
+
+~pluckPattern = Pbind(
+	\instrument, \plucking,
+	\dur, 1/4,
+	\freq, 220,
+	\amp, Pseq(~pluckAmps, inf),
+	\decay, Pwhite(1, 2),
+	\dampen, Prand([0.7, 0.8, 0.6], inf),
+);
+
+~pluckQuasiArp = Pbind(
+	\instrument, \plucking,
+	\midinote, Prand([45, 45, 48, 50, 52, 55, 33, 33], inf),
+	\decay, Pwhite(4, 7, inf),
+	\dampen, Pwhite(0.6, 0.75, inf),
+	\dur, 1/4,
+	\amp, Pseq(~quasiArpAmps * 0.6, inf)
+);
+
+
+~stringsPad = { arg measures ;
+	Pbind(
+		\instrument, "padSynth",
+		\midinote, Pseq([[52, 57, 60, 64], [52, 55, 59, 64]], measures),
+		\amp, 0.5,
+		\dur, 8,
+		\lfowidth, 0.025,
+		\lforate, 2,
+		\rq, 0.9
+)};
+
+Pspawner({ arg salmon;
+	salmon.par(~crashPattern.value(2));
+	salmon.par(~synthHatPattern);
+	salmon.par(~stringsPad.value(2));
+	salmon.seq(~kickPattern.value(6));
+
+	salmon.seq(~riserPattern.value(1));
+
+	salmon.par(~crashPattern.value(2));
+	salmon.par(~pluckQuasiArp); // this should run infinitely
+
+	salmon.par(~zapPattern.value(3.5)); // because this amps array is twice as long
+	salmon.seq(~kickPattern.value(7));
+	wait(4);
+
+	salmon.suspendAll;
+
+	salmon.par(~crashPattern.value(2));
+	salmon.par(~stringsPad.value(2));
+	salmon.seq(~kickPattern.value(7));
+	wait(4);
+
+	salmon.par(~crashPattern.value(2));
+	salmon.par(~pluckQuasiArp); // this should run infinitely
+	salmon.par(~synthHatPattern); // these just run infinitely
+
+	salmon.par(~sampleClapPattern.value(7));
+	salmon.par(~sampleHatPattern.value(7));
+	salmon.par(~kickPattern.value(7));
+	salmon.seq(~zapPattern.value(4)); // again, double-length amps array
+
+	salmon.par(~crashPattern.value(2));
+	salmon.par(~stringsPad.value(2));
+	salmon.par(~snarePattern.value(6));
+	salmon.seq(~kickPattern.value(6));
+
+	salmon.seq(~riserPattern.value(1));
+
+	salmon.par(~crashPattern.value(2));
+	salmon.par(~sampleClapPattern.value(7));
+	salmon.par(~sampleHatPattern.value(7));
+	salmon.seq(~kickPattern.value(7));
+	wait(4);
+
+	salmon.par(~crashPattern.value(2));
+	salmon.par(~stringsPad.value(2));
+	salmon.par(~snarePattern.value(7));
+	salmon.par(~sampleClapPattern.value(7));
+	salmon.par(~sampleHatPattern.value(7));
+	salmon.seq(~zapPattern.value(4));  // function should handle this
+
+	salmon.par(~crashPattern.value(2));
+	salmon.seq(~kickPattern.value(6));
+
+	salmon.seq(~riserPattern.value(1));
+
+	salmon.par(~crashPattern.value(2));
+	salmon.seq(~stringsPad.value(2));
+	salmon.suspendAll;
+
+	salmon.seq(~crashPattern.value(2));
+
+}).play(~clock);
+
+)
